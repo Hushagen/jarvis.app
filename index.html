@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JARVIS</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-black text-white min-h-screen p-4">
+<div class="max-w-lg mx-auto">
+  <h1 class="text-4xl font-black tracking-widest text-green-400 mt-6">JARVIS</h1>
+  <p id="dato" class="text-xs text-gray-600 mb-6"></p>
+  <div id="kurser" class="space-y-2 mb-6"></div>
+  <div id="chat" class="space-y-3 mb-4"></div>
+  <div class="flex gap-2">
+    <input id="input" type="text" placeholder="Spør JARVIS..." 
+      class="flex-1 bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-sm outline-none text-white"
+      onkeydown="if(event.key==='Enter')send()"/>
+    <button onclick="send()" 
+      class="bg-green-500 text-black font-bold px-5 rounded-xl text-sm">↑</button>
+  </div>
+  <p class="text-xs text-gray-800 text-center mt-3">Alle beslutninger tas av deg</p>
+</div>
+<script>
+const KURSER_URL = "https://jarvis-kurser.onrender.com/kurser";
+const PORTEFOLJE = {
+  SMOP: {antall: 10, kost: 51.60},
+  ENDUR: {antall: 20, kost: 122.40},
+  SDSD: {antall: 260, kost: 1.89}
+};
+
+let kurserData = {};
+let history = [];
+
+const SYSTEM = `Du er JARVIS – personlig investeringsassistent for en 18-åring på Nordnet.
+PORTEFØLJE: SMOP (10 stk, kost 51.60kr), ENDUR (20 stk, kost 122.40kr), SDSD (260 stk, kost 1.89kr). Kontanter: 2200kr.
+VIKTIG: SDSD generalforsamling 10. juni 2026.
+REGLER: Vær ærlig om usikkerhet. Fremhev risiko like tydelig som muligheter. Brukeren bestemmer alt selv. Svar på norsk.
+Når du får kurser, bruk dem aktivt i analysen.
+MORGENRAPPORT (skriv når brukeren ber om det):
+1. Markedsoversikt
+2. Porteføljeanalyse med kursene under
+3. Handlingsforslag (behold/kjøp/reduser/selg + begrunnelse + sikkerhetsnivå)
+4. Nye muligheter (3-5 aksjer)
+5. Læringsdel (ett begrep)`;
+
+async function hentKurser() {
+  try {
+    const r = await fetch(KURSER_URL);
+    kurserData = await r.json();
+    visKurser();
+  } catch(e) {
+    document.getElementById("kurser").innerHTML = 
+      '<p class="text-xs text-red-800">Kurser utilgjengelig (børs stengt?)</p>';
+  }
+}
+
+function visKurser() {
+  const div = document.getElementById("kurser");
+  const items = ["SMOP","ENDUR","SDSD"].map(navn => {
+    const d = kurserData[navn];
+    const p = PORTEFOLJE[navn];
+    if(!d || d.kurs === "N/A") return `<div class="flex justify-between text-xs border border-gray-800 rounded-lg px-3 py-2"><span class="text-gray-400">${navn}</span><span class="text-gray-600">—</span></div>`;
+    const gt = ((d.kurs - p.kost) / p.kost * 100).toFixed(1);
+    const farge = gt >= 0 ? "text-green-400" : "text-red-400";
+    const dagFarge = d.endring_pct >= 0 ? "text-green-400" : "text-red-400";
+    return `<div class="flex justify-between text-xs border border-gray-800 rounded-lg px-3 py-2">
+      <span class="font-bold">${navn}</span>
+      <span>${d.kurs} kr</span>
+      <span class="${dagFarge}">${d.endring_pct > 0 ? '+' : ''}${d.endring_pct}% i dag</span>
+      <span class="${farge}">${gt > 0 ? '+' : ''}${gt}% totalt</span>
+    </div>`;
+  });
+  div.innerHTML = items.join('') + `<p class="text-xs text-gray-800 text-right">Oppdatert ${kurserData.oppdatert || '--'}</p>`;
+}
+
+function leggTilMelding(rolle, tekst) {
+  const div = document.getElementById("chat");
+  const er_bruker = rolle === "user";
+  const el = document.createElement("div");
+  el.className = `text-sm p-3 rounded-xl ${er_bruker ? "bg-green-900 ml-8 text-green-100" : "bg-gray-900 mr-8 text-gray-200"}`;
+  el.style.whiteSpace = "pre-wrap";
+  el.textContent = tekst;
+  div.appendChild(el);
+  div.scrollTop = div.scrollHeight;
+}
+
+async function send() {
+  const input = document.getElementById("input");
+  const tekst = input.value.trim();
+  if(!tekst) return;
+  input.value = "";
+  leggTilMelding("user", tekst);
+
+  const kursTekst = Object.entries(kurserData)
+    .filter(([k]) => k !== "oppdatert")
+    .map(([k,v]) => `${k}: ${v.kurs}kr (${v.endring_pct > 0 ? '+' : ''}${v.endring_pct}% i dag)`)
+    .join(", ");
+
+  history.push({role:"user", content: tekst + (kursTekst ? `\n\n[KURSER NÅ: ${kursTekst}]` : "")});
+
+  const laster = document.createElement("div");
+  laster.className = "text-sm p-3 rounded-xl bg-gray-900 mr-8 text-gray-500";
+  laster.textContent = "Tenker...";
+  document.getElementById("chat").appendChild(laster);
+
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 1000,
+        system: SYSTEM,
+        messages: history
+      })
+    });
+    const data = await res.json();
+    const svar = data.content?.[0]?.text || "Ingen respons";
+    laster.remove();
+    leggTilMelding("assistant", svar);
+    history.push({role:"assistant", content: svar});
+  } catch(e) {
+    laster.textContent = "Feil – prøv igjen";
+  }
+}
+
+document.getElementById("dato").textContent = 
+  new Date().toLocaleDateString("nb-NO", {weekday:"long", day:"numeric", month:"long", year:"numeric"});
+
+hentKurser();
+setInterval(hentKurser, 60000);
+</script>
+</body>
+</html>
